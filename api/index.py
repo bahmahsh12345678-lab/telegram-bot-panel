@@ -15,7 +15,7 @@ except ImportError:
 # ============================================================
 # ⚙️ AYARLAR
 # ============================================================
-MASTER_TOKEN = "9013867167:AAEjrzuq5_UN4CZfIBrGta0KZkmNt871b1E"
+MASTER_TOKEN = "8603840053:AAFeooHYU18Dyd_-PfLME5n0fwvvo6HTfps"
 MASTER_OWNER_ID = 8947359034
 
 # ⚠️ BURAYA KENDİ GİTHUB TOKENİNİ YAPIŞTIR
@@ -46,7 +46,7 @@ BAD_WORDS = ["DEVOLOPER","DEVELOPER","developer","Devoloper","sürüm","Sürüm"
 # 🌐 OTOMATİK URL BULUCU
 # ============================================================
 def get_base_url():
-    url = os.environ.get("VERCEL_PROJECT_PRODUCTION_URL") or os.environ.get("VERCEL_URL") or "ilahallahgalibammm.vercel.app"
+    url = os.environ.get("VERCEL_PROJECT_PRODUCTION_URL") or os.environ.get("VERCEL_URL") or "aminoglubabalarinc.vercel.app"
     if not url.startswith("http"): url = "https://" + url
     return url.rstrip("/")
 
@@ -105,7 +105,7 @@ def set_state(uid, state):
     save_db(db)
 
 # ============================================================
-# 🤖 ANA BOT (TÜM ŞABLONLAR)
+# 🤖 ANA BOT
 # ============================================================
 master = telebot.TeleBot(MASTER_TOKEN, threaded=False)
 MASTER_STATE = {}
@@ -119,22 +119,28 @@ TEMPLATES = {
     "sms": {"emoji": "📨", "name": "SMS Bomber", "desc": "Numaraya SMS"}
 }
 
+def get_main_kb(uid):
+    kb = InlineKeyboardMarkup()
+    kb.add(InlineKeyboardButton("🧩 Şablon Seç", callback_data="show_templates"))
+    if uid == MASTER_OWNER_ID:
+        kb.add(InlineKeyboardButton("👑 Master Admin Panel", callback_data="master_admin"))
+    return kb
+
 @master.message_handler(commands=["start"])
 def master_start(m):
     set_state(m.from_user.id, None); MASTER_STATE.pop(m.from_user.id, None)
-    kb = InlineKeyboardMarkup()
-    kb.add(InlineKeyboardButton("🧩 Şablon Seç", callback_data="show_templates"))
-    if m.from_user.id == MASTER_OWNER_ID:
-        kb.add(InlineKeyboardButton("👑 Master Admin Panel", callback_data="master_admin"))
-    
     welcome_text = "🇹🇷 <b>Hoş Geldiniz, BABAPRO!</b>\n\n🤖 Botumuz <b>7/24</b> hizmet vermekte ve <b>tamamen ücretsizdir</b>.\n\nKendi botunuzu oluşturmak için aşağıdaki butonu kullanın."
-    master.send_message(m.chat.id, welcome_text, reply_markup=kb, parse_mode="HTML")
+    master.send_message(m.chat.id, welcome_text, reply_markup=get_main_kb(m.from_user.id), parse_mode="HTML")
 
 @master.callback_query_handler(func=lambda c: True)
 def master_cb(c):
-    uid = c.from_user.id; d = c.data; chat_id = c.message.chat.id; msg_id = c.message.message_id
+    uid = c.from_user.id
+    d = c.data
+    chat_id = c.message.chat.id
+    msg_id = c.message.message_id
     master.answer_callback_query(c.id)
 
+    # --- ANA MENÜLER ---
     if d == "show_templates":
         kb = InlineKeyboardMarkup()
         for key, tpl in TEMPLATES.items():
@@ -142,6 +148,10 @@ def master_cb(c):
         kb.add(InlineKeyboardButton("⬅️ Geri", callback_data="home"))
         return master.edit_message_text("🧩 <b>Bir şablon seçin</b>", chat_id, msg_id, reply_markup=kb, parse_mode="HTML")
 
+    if d == "home":
+        return master.edit_message_text("🏠 <b>Ana Menü</b>", chat_id, msg_id, reply_markup=get_main_kb(uid), parse_mode="HTML")
+
+    # --- MASTER ADMIN PANELİ ---
     if uid == MASTER_OWNER_ID:
         if d == "master_admin":
             db = load_db()
@@ -162,6 +172,7 @@ def master_cb(c):
             
         if d.startswith("m_bot:"):
             tok = d.split(":")[1]; clon = get_clon(tok)
+            if not clon: return master.edit_message_text("❌ Bot bulunamadı.", chat_id, msg_id)
             kb = InlineKeyboardMarkup().add(
                 InlineKeyboardButton("🗑 Botu Sil", callback_data=f"del_bot:{tok}"),
                 InlineKeyboardButton("⬅️ Geri", callback_data="m_manage_bots")
@@ -211,23 +222,26 @@ def master_cb(c):
             MASTER_STATE[uid] = {"action": "global_announce"}
             return master.send_message(chat_id, "📢 Tüm kullanıcılara gönderilecek duyuru metnini yaz:")
 
-    if d == "home": master_start(c.message)
-    elif d.startswith("tpl:"):
+    # --- BOT OLUŞTURMA ---
+    if d.startswith("tpl:"):
         set_state(uid, {"template": d[4:], "step": "token", "data": {}})
-        master.edit_message_text("<b>Adım 1:</b> Bot Tokenini gönder:", chat_id, msg_id, parse_mode="HTML")
+        return master.edit_message_text("<b>Adım 1:</b> Bot Tokenini gönder:", chat_id, msg_id, parse_mode="HTML")
+        
     elif d.startswith("fc:"):
         n = int(d[3:]); st = get_state(uid); st["data"]["forced_channels"] = []
         if n == 0:
             st["step"] = "bot_name"; set_state(uid, st)
-            master.edit_message_text("<b>Adım 4:</b> Bot ismini gönder:", chat_id, msg_id, parse_mode="HTML")
+            return master.edit_message_text("<b>Adım 4:</b> Bot ismini gönder:", chat_id, msg_id, parse_mode="HTML")
         else:
             st["data"]["_fc_rem"] = n; st["step"] = "fc_link"; set_state(uid, st)
-            master.edit_message_text("<b>1. kanal linkini gönder:</b>", chat_id, msg_id, parse_mode="HTML")
+            return master.edit_message_text("<b>1. kanal linkini gönder:</b>", chat_id, msg_id, parse_mode="HTML")
+            
     elif d == "confirm_yes":
         st = get_state(uid); set_state(uid, None); _create_bot(master, uid, chat_id, st)
+        
     elif d == "cancel":
         set_state(uid, None); MASTER_STATE.pop(uid, None)
-        master.edit_message_text("❌ İptal edildi.", chat_id, msg_id)
+        return master.edit_message_text("❌ İşlem iptal edildi.", chat_id, msg_id, reply_markup=get_main_kb(uid), parse_mode="HTML")
 
 @master.message_handler(func=lambda m: get_state(m.from_user.id) is not None or m.from_user.id in MASTER_STATE)
 def master_step(m):
@@ -318,7 +332,7 @@ def _create_bot(bot, uid, chat_id, st):
     bot.send_message(chat_id, f"✅ <b>Bot başarıyla oluşturuldu!</b>\n\n🤖 <b>{d['bot_name']}</b>\n🔗 https://t.me/{d['bot_username']}\n\n<b>Kullanıcı:</b> /start\n<b>Sen:</b> /admin", parse_mode="HTML")
 
 # ============================================================
-# 🎛 CLON BOT (Tüm Şablonlar İçin Tek Motor)
+# 🎛 CLON BOT
 # ============================================================
 PENDING_ACTION = {}
 _user_last_query = {}
@@ -403,7 +417,6 @@ def handle_clon_update(token, update):
             if from_id != clon["owner_id"]: return
             _show_clon_panel(bot, chat_id, clon); return
 
-        # --- SORGU ŞABLONU MANTIĞI ---
         if clon.get("template") == "query":
             query_type = clon.get("active_query", {}).get(str(from_id))
             if query_type:
@@ -435,7 +448,6 @@ def handle_clon_update(token, update):
                     data = clean_response(r.text)
                     if isinstance(data, dict) and data.get("hata"): return bot.edit_message_text(f"❌ Hata: {data.get('hata')}", chat_id, status.message_id)
 
-                    # DOSYA KAYDETME HATASI ÇÖZÜLDÜ (Vercel /tmp)
                     fn = os.path.join(DATA_DIR, f"sorgu_{int(time.time())}.json")
                     with open(fn, "w", encoding="utf-8") as f: json.dump(data, f, ensure_ascii=False, indent=4)
                     
