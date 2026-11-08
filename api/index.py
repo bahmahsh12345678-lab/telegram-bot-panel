@@ -13,13 +13,12 @@ except ImportError:
     from flask import Flask, request
 
 # ============================================================
-# ⚙️ AYARLAR
+# ⚙️ AYARLAR (GITHUB TOKEN EKLENDİ)
 # ============================================================
-MASTER_TOKEN = "8603840053:AAFeooHYU18Dyd_-PfLME5n0fwvvo6HTfps"
+MASTER_TOKEN = "9036617836:AAEk3lLUWF4r0ULGtZOZWn85OuM4g2nMKrs"
 MASTER_OWNER_ID = 8947359034
 
-# ⚠️ BURAYA KENDİ GİTHUB TOKENİNİ YAPIŞTIR
-GITHUB_TOKEN = "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" 
+GITHUB_TOKEN = "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"
 GITHUB_REPO = "bahmahsh12345678-lab/telegram-bot-panel"
 GITHUB_BRANCH = "main"
 
@@ -43,7 +42,7 @@ DEFAULT_QUERIES = {
 BAD_WORDS = ["DEVOLOPER","DEVELOPER","developer","Devoloper","sürüm","Sürüm","SURUM","version","Version","auth","Auth","altauth","@jessy_php","jessy_php","JESSY_PHP"]
 
 # ============================================================
-# 🌐 OTOMATİK URL BULUCU
+# 🌐 OTOMATİK URL
 # ============================================================
 def get_base_url():
     url = os.environ.get("VERCEL_PROJECT_PRODUCTION_URL") or os.environ.get("VERCEL_URL") or "aminoglubabalarinc.vercel.app"
@@ -140,7 +139,6 @@ def master_cb(c):
     msg_id = c.message.message_id
     master.answer_callback_query(c.id)
 
-    # --- ANA MENÜLER ---
     if d == "show_templates":
         kb = InlineKeyboardMarkup()
         for key, tpl in TEMPLATES.items():
@@ -151,7 +149,6 @@ def master_cb(c):
     if d == "home":
         return master.edit_message_text("🏠 <b>Ana Menü</b>", chat_id, msg_id, reply_markup=get_main_kb(uid), parse_mode="HTML")
 
-    # --- MASTER ADMIN PANELİ ---
     if uid == MASTER_OWNER_ID:
         if d == "master_admin":
             db = load_db()
@@ -222,7 +219,6 @@ def master_cb(c):
             MASTER_STATE[uid] = {"action": "global_announce"}
             return master.send_message(chat_id, "📢 Tüm kullanıcılara gönderilecek duyuru metnini yaz:")
 
-    # --- BOT OLUŞTURMA ---
     if d.startswith("tpl:"):
         set_state(uid, {"template": d[4:], "step": "token", "data": {}})
         return master.edit_message_text("<b>Adım 1:</b> Bot Tokenini gönder:", chat_id, msg_id, parse_mode="HTML")
