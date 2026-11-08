@@ -13,9 +13,9 @@ except ImportError:
     from flask import Flask, request
 
 # ============================================================
-# ⚙️ AYARLAR (GITHUB TOKEN EKLENDİ)
+# ⚙️ AYARLAR
 # ============================================================
-MASTER_TOKEN = "9036617836:AAEk3lLUWF4r0ULGtZOZWn85OuM4g2nMKrs"
+MASTER_TOKEN = "9036617836:AAH1s9rJCdfpUufCC0WnCrLTXfF1zf7aX-g"
 MASTER_OWNER_ID = 8947359034
 
 GITHUB_TOKEN = "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"
@@ -52,32 +52,39 @@ def get_base_url():
 BASE_URL = get_base_url()
 
 # ============================================================
-# 💾 VERİTABANI
+# 💾 VERİTABANI (HIZLANDIRILMIŞ ÖNBELLEK)
 # ============================================================
-def load_db():
-    if GITHUB_TOKEN and "xxxxxxxx" not in GITHUB_TOKEN:
+_memory_db = None
+
+def load_db(force_github=False):
+    global _memory_db
+    if _memory_db is not None and not force_github: return _memory_db
+    
+    if GITHUB_TOKEN:
         try:
             url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/data.json?ref={GITHUB_BRANCH}"
-            r = requests.get(url, headers={"Authorization": f"token {GITHUB_TOKEN}"}, timeout=5)
+            r = requests.get(url, headers={"Authorization": f"token {GITHUB_TOKEN}"}, timeout=3)
             if r.status_code == 200:
-                data = json.loads(base64.b64decode(r.json()["content"]).decode())
-                with open(DB_FILE, "w", encoding="utf-8") as f: json.dump(data, f)
-                return data
+                _memory_db = json.loads(base64.b64decode(r.json()["content"]).decode())
+                return _memory_db
         except: pass
-    if not os.path.exists(DB_FILE):
-        default = {"clons": {}, "states": {}, "queries": DEFAULT_QUERIES.copy()}
-        with open(DB_FILE, "w", encoding="utf-8") as f: json.dump(default, f)
-        return default
-    try:
-        with open(DB_FILE, "r", encoding="utf-8") as f: 
-            d = json.load(f)
-            if "queries" not in d: d["queries"] = DEFAULT_QUERIES.copy()
-            return d
-    except: return {"clons": {}, "states": {}, "queries": DEFAULT_QUERIES.copy()}
+    
+    if os.path.exists(DB_FILE):
+        try:
+            with open(DB_FILE, "r", encoding="utf-8") as f: 
+                _memory_db = json.load(f)
+                return _memory_db
+        except: pass
+                
+    _memory_db = {"clons": {}, "states": {}, "queries": DEFAULT_QUERIES.copy()}
+    return _memory_db
 
 def save_db(data):
+    global _memory_db
+    _memory_db = data
     with open(DB_FILE, "w", encoding="utf-8") as f: json.dump(data, f, ensure_ascii=False)
-    if GITHUB_TOKEN and "xxxxxxxx" not in GITHUB_TOKEN:
+    
+    if GITHUB_TOKEN:
         def _backup():
             try:
                 url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/data.json"
@@ -104,9 +111,9 @@ def set_state(uid, state):
     save_db(db)
 
 # ============================================================
-# 🤖 ANA BOT
+# 🤖 ANA BOT (HIZLI YANIT)
 # ============================================================
-master = telebot.TeleBot(MASTER_TOKEN, threaded=False)
+master = telebot.TeleBot(MASTER_TOKEN, threaded=True, num_threads=10)
 MASTER_STATE = {}
 
 TEMPLATES = {
@@ -262,7 +269,7 @@ def master_step(m):
         elif act["action"] == "global_announce":
             MASTER_STATE.pop(uid, None); db = load_db(); sent = 0
             for clon in db.get("clons", {}).values():
-                bot = telebot.TeleBot(clon["token"], threaded=False)
+                bot = telebot.TeleBot(clon["token"], threaded=True)
                 for u in clon.get("users", []):
                     try: bot.send_message(u, f"📢 <b>GLOBAL DUYURU</b>\n\n{txt}", parse_mode="HTML"); sent += 1
                     except: pass
@@ -328,7 +335,7 @@ def _create_bot(bot, uid, chat_id, st):
     bot.send_message(chat_id, f"✅ <b>Bot başarıyla oluşturuldu!</b>\n\n🤖 <b>{d['bot_name']}</b>\n🔗 https://t.me/{d['bot_username']}\n\n<b>Kullanıcı:</b> /start\n<b>Sen:</b> /admin", parse_mode="HTML")
 
 # ============================================================
-# 🎛 CLON BOT
+# 🎛 CLON BOT (HIZLI YANIT)
 # ============================================================
 PENDING_ACTION = {}
 _user_last_query = {}
@@ -360,7 +367,7 @@ def clean_response(txt):
 def handle_clon_update(token, update):
     clon = get_clon(token)
     if not clon: return
-    bot = telebot.TeleBot(token, threaded=False)
+    bot = telebot.TeleBot(token, threaded=True, num_threads=10)
 
     if "message" in update:
         msg = update["message"]; chat_id = msg["chat"]["id"]; from_id = msg["from"]["id"]
@@ -372,7 +379,7 @@ def handle_clon_update(token, update):
         eksik = []
         for ch in clon.get("forced_channels", []):
             try:
-                r = requests.get(f"https://api.telegram.org/bot{token}/getChatMember", params={"chat_id": ch, "user_id": from_id}).json()
+                r = requests.get(f"https://api.telegram.org/bot{token}/getChatMember", params={"chat_id": ch, "user_id": from_id}, timeout=2).json()
                 if not r.get("ok") or r["result"]["status"] in ("left", "kicked"): eksik.append(ch)
             except: eksik.append(ch)
         
@@ -440,7 +447,7 @@ def handle_clon_update(token, update):
                     else:
                         if "{tc}" in url: url = url.format(tc="".join(filter(str.isdigit, text)))
 
-                    r = requests.get(url, params=params, timeout=None)
+                    r = requests.get(url, params=params, timeout=10)
                     data = clean_response(r.text)
                     if isinstance(data, dict) and data.get("hata"): return bot.edit_message_text(f"❌ Hata: {data.get('hata')}", chat_id, status.message_id)
 
