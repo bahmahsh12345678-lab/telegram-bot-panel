@@ -15,7 +15,7 @@ except ImportError:
 # ============================================================
 # ⚙️ AYARLAR (KODUN İÇİNE GÖMÜLDÜ)
 # ============================================================
-MASTER_TOKEN = "9013867167:AAFY078asKpu325681EmbprfaRBDoHz5IFA"
+MASTER_TOKEN = "9013867167:AAHbNDNHqW9tf4eCqCrkkErXVQRZmbVzkzQ"
 MASTER_OWNER_ID = 8947359034
 
 # GitHub Yedekleme (Verilerin silinmemesi için)
