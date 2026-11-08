@@ -24,7 +24,7 @@ GITHUB_REPO = "bahmahsh12345678-lab/telegram-bot-panel"
 GITHUB_BRANCH = "main"
 
 # Vercel Linki (Webhook için)
-VERCEL_URL = "https://babaprogamsessshostkkk.vercel.app/"
+VERCEL_URL = "https://babaprogamsessshostkkk.vercel.app"
 
 DATA_DIR = "/tmp"
 DB_FILE = os.path.join(DATA_DIR, "data.json")
