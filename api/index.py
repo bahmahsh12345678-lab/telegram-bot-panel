@@ -13,15 +13,18 @@ except ImportError:
     from flask import Flask, request
 
 # ============================================================
-# ⚙️ AYARLAR
+# ⚙️ AYARLAR (KODUN İÇİNE GÖMÜLDÜ)
 # ============================================================
-MASTER_TOKEN = os.environ.get("MASTER_TOKEN", "9013867167:AAFY078asKpu325681EmbprfaRBDoHz5IFA")
-MASTER_OWNER_ID = int(os.environ.get("MASTER_OWNER_ID", "8947359034"))
-VERCEL_URL = os.environ.get("VERCEL_URL", "https://telegram-bot-panelbbbbfddd.vercel.app")
+MASTER_TOKEN = "9013867167:AAFY078asKpu325681EmbprfaRBDoHz5IFA"
+MASTER_OWNER_ID = 8947359034
 
-GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "")
-GITHUB_REPO = os.environ.get("GITHUB_REPO", "")
-GITHUB_BRANCH = os.environ.get("GITHUB_BRANCH", "main")
+# GitHub Yedekleme (Verilerin silinmemesi için)
+GITHUB_TOKEN = "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" # <-- BURAYA KENDİ GITHUB TOKENİNİ YAPIŞTIR
+GITHUB_REPO = "bahmahsh12345678-lab/telegram-bot-panel"
+GITHUB_BRANCH = "main"
+
+# Vercel Linki (Webhook için)
+VERCEL_URL = "https://telegram-bot-panelbbbbfddd.vercel.app"
 
 DATA_DIR = "/tmp"
 DB_FILE = os.path.join(DATA_DIR, "data.json")
@@ -46,7 +49,7 @@ BAD_WORDS = ["DEVOLOPER","DEVELOPER","developer","Devoloper","sürüm","Sürüm"
 # 💾 VERİTABANI
 # ============================================================
 def load_db():
-    if GITHUB_TOKEN and GITHUB_REPO:
+    if GITHUB_TOKEN and "senin_github" not in GITHUB_TOKEN:
         try:
             url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/data.json?ref={GITHUB_BRANCH}"
             r = requests.get(url, headers={"Authorization": f"token {GITHUB_TOKEN}"}, timeout=5)
@@ -68,7 +71,7 @@ def load_db():
 
 def save_db(data):
     with open(DB_FILE, "w", encoding="utf-8") as f: json.dump(data, f, ensure_ascii=False)
-    if GITHUB_TOKEN and GITHUB_REPO:
+    if GITHUB_TOKEN and "senin_github" not in GITHUB_TOKEN:
         def _backup():
             try:
                 url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/data.json"
@@ -170,7 +173,7 @@ def master_cb(c):
 
         if d.startswith("q_toggle:"):
             q_name = d.split(":")[1]; db = load_db(); db["queries"][q_name]["active"] = not db["queries"][q_name]["active"]; save_db(db)
-            return master_cb(c) # Yenile
+            return master_cb(c)
             
         if d.startswith("q_url:"):
             q_name = d.split(":")[1]; MASTER_STATE[uid] = {"action": "set_url", "q_name": q_name}
@@ -184,7 +187,6 @@ def master_cb(c):
             MASTER_STATE[uid] = {"action": "global_announce"}
             return master.send_message(chat_id, "📢 Tüm kullanıcılara gönderilecek duyuru metnini yaz:")
 
-    # Setup Flow
     if d == "home": master_start(c.message)
     elif d.startswith("tpl:"):
         set_state(uid, {"template": d[4:], "step": "token", "data": {}})
@@ -399,11 +401,9 @@ def handle_clon_update(token, update):
                 fn = f"sorgu_{int(time.time())}.json"
                 with open(fn, "w", encoding="utf-8") as f: json.dump(data, f, ensure_ascii=False, indent=4)
                 
-                # Eski mesajları sil
                 try: bot.delete_message(chat_id, status.message_id)
                 except: pass
                 
-                # Geri ve Ana Menü butonları
                 result_kb = InlineKeyboardMarkup()
                 result_kb.add(
                     InlineKeyboardButton("⬅️ Geri", callback_data="back_to_menu"),
@@ -425,9 +425,8 @@ def handle_clon_update(token, update):
         if data == "check_join": return bot.send_message(chat_id, "✅ Onaylandı! /start yaz.")
         
         if data == "back_to_menu":
-            try: bot.delete_message(chat_id, msg_id) # Eski sonucu sil
+            try: bot.delete_message(chat_id, msg_id)
             except: pass
-            # Ana menüyü yeniden gönder
             db_queries = load_db().get("queries", DEFAULT_QUERIES)
             active_queries = [q for q, v in db_queries.items() if v.get("active", True)]
             per_row = clon.get("buttons_per_row", 2)
