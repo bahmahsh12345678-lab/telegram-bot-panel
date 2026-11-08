@@ -13,24 +13,21 @@ except ImportError:
     from flask import Flask, request
 
 # ============================================================
-# ⚙️ AYARLAR (KODUN İÇİNE GÖMÜLDÜ)
+# ⚙️ AYARLAR
 # ============================================================
-MASTER_TOKEN = "9013867167:AAHbNDNHqW9tf4eCqCrkkErXVQRZmbVzkzQ"
+MASTER_TOKEN = "9013867167:AAFGjvwNGaOuPwHJ0l6QwgZdJVk21rhikSY"
 MASTER_OWNER_ID = 8947359034
 
-# GitHub Yedekleme (Verilerin silinmemesi için)
-GITHUB_TOKEN = "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" # <-- BURAYA KENDİ GITHUB TOKENİNİ YAPIŞTIR
+# ⚠️ BURAYA KENDİ GİTHUB TOKENİNİ YAPIŞTIR (Verilerin silinmemesi için)
+GITHUB_TOKEN = "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" 
 GITHUB_REPO = "bahmahsh12345678-lab/telegram-bot-panel"
 GITHUB_BRANCH = "main"
-
-# Vercel Linki (Webhook için)
-VERCEL_URL = "https://babaprogamsessshostkkk.vercel.app"
 
 DATA_DIR = "/tmp"
 DB_FILE = os.path.join(DATA_DIR, "data.json")
 
 # ══════════════════════════════════════════
-# VARSAYILAN API ADRESLERİ VE SORGULAR
+# VARSAYILAN SORGULAR
 # ══════════════════════════════════════════
 DEFAULT_QUERIES = {
     "TC Sorgu": {"url": "https://logsuzlarsystempro.alwaysdata.net/api/tcgsm.php?tc={tc}", "active": True, "hint": "11 haneli TC girin\n📌 Örnek: <code>11111111110</code>"},
@@ -46,10 +43,24 @@ DEFAULT_QUERIES = {
 BAD_WORDS = ["DEVOLOPER","DEVELOPER","developer","Devoloper","sürüm","Sürüm","SURUM","version","Version","auth","Auth","altauth","@jessy_php","jessy_php","JESSY_PHP"]
 
 # ============================================================
+# 🌐 OTOMATİK URL BULUCU (Çift eğik çizgiyi önler)
+# ============================================================
+def get_base_url():
+    # Vercel'in otomatik atadığı çevre değişkenlerini kullanır
+    url = os.environ.get("VERCEL_PROJECT_PRODUCTION_URL") or os.environ.get("VERCEL_URL") or "babaprogamsessshostkkk.vercel.app"
+    
+    # Başında http yoksa ekle
+    if not url.startswith("http"): url = "https://" + url
+    # Sondaki eğik çizgileri temizle (308 hatasını önler)
+    return url.rstrip("/")
+
+BASE_URL = get_base_url()
+
+# ============================================================
 # 💾 VERİTABANI
 # ============================================================
 def load_db():
-    if GITHUB_TOKEN and "senin_github" not in GITHUB_TOKEN:
+    if GITHUB_TOKEN and "" not in GITHUB_TOKEN:
         try:
             url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/data.json?ref={GITHUB_BRANCH}"
             r = requests.get(url, headers={"Authorization": f"token {GITHUB_TOKEN}"}, timeout=5)
@@ -98,7 +109,7 @@ def set_state(uid, state):
     save_db(db)
 
 # ============================================================
-# 🤖 ANA BOT (Master)
+# 🤖 ANA BOT
 # ============================================================
 master = telebot.TeleBot(MASTER_TOKEN, threaded=False)
 MASTER_STATE = {}
@@ -110,6 +121,7 @@ def master_start(m):
     kb.add(InlineKeyboardButton("🧩 Sorgu Botu Oluştur", callback_data="tpl:query"))
     if m.from_user.id == MASTER_OWNER_ID:
         kb.add(InlineKeyboardButton("👑 Master Admin Panel", callback_data="master_admin"))
+    
     welcome_text = "🇹🇷 <b>Hoş Geldiniz!</b>\n\n🤖 Botumuz <b>7/24</b> hizmet vermekte ve <b>tamamen ücretsizdir</b>.\n\nKendi sorgu botunuzu oluşturmak için aşağıdaki butonu kullanın."
     master.send_message(m.chat.id, welcome_text, reply_markup=kb, parse_mode="HTML")
 
@@ -288,13 +300,13 @@ def _create_bot(bot, uid, chat_id, st):
     }
     save_clon(d["token"], clon)
     try:
-        requests.get(f"https://api.telegram.org/bot{d['token']}/setWebhook?url={VERCEL_URL}/clon/{d['token']}", timeout=5)
+        requests.get(f"https://api.telegram.org/bot{d['token']}/setWebhook?url={BASE_URL}/clon/{d['token']}", timeout=5)
         requests.post(f"https://api.telegram.org/bot{d['token']}/setMyName", json={"name": d["bot_name"]}, timeout=5)
     except: pass
     bot.send_message(chat_id, f"✅ <b>Bot başarıyla oluşturuldu!</b>\n\n🤖 <b>{d['bot_name']}</b>\n🔗 https://t.me/{d['bot_username']}\n\n<b>Kullanıcı:</b> /start\n<b>Sen:</b> /admin", parse_mode="HTML")
 
 # ============================================================
-# 🎛 CLON BOT (Gelişmiş Sorgu, TXT ve Temizleme)
+# 🎛 CLON BOT (Sorgu Motoru)
 # ============================================================
 PENDING_ACTION = {}
 _user_last_query = {}
@@ -547,18 +559,18 @@ def clon_webhook(token):
 
 @app.route("/setup", methods=["GET"])
 def setup():
-    r = requests.get(f"https://api.telegram.org/bot{MASTER_TOKEN}/setWebhook?url={VERCEL_URL}/master")
+    r = requests.get(f"https://api.telegram.org/bot{MASTER_TOKEN}/setWebhook?url={BASE_URL}/master")
     for t in load_db().get("clons", {}):
-        try: requests.get(f"https://api.telegram.org/bot{t}/setWebhook?url={VERCEL_URL}/clon/{t}")
+        try: requests.get(f"https://api.telegram.org/bot{t}/setWebhook?url={BASE_URL}/clon/{t}")
         except: pass
-    return {"ok": True, "clons": len(load_db().get("clons", {}))}
+    return {"ok": True, "base_url": BASE_URL, "clons": len(load_db().get("clons", {}))}
 
 @app.route("/cron", methods=["GET"])
 def cron():
     try:
-        requests.get(f"https://api.telegram.org/bot{MASTER_TOKEN}/setWebhook?url={VERCEL_URL}/master")
+        requests.get(f"https://api.telegram.org/bot{MASTER_TOKEN}/setWebhook?url={BASE_URL}/master")
         for t in load_db().get("clons", {}):
-            requests.get(f"https://api.telegram.org/bot{t}/setWebhook?url={VERCEL_URL}/clon/{t}")
+            requests.get(f"https://api.telegram.org/bot{t}/setWebhook?url={BASE_URL}/clon/{t}")
     except: pass
     return {"status": "cron ok"}
 
