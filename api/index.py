@@ -11,7 +11,7 @@ except ImportError:
 # ============================================================
 # ⚙️ AYARLAR
 # ============================================================
-MASTER_TOKEN = "9270110650:AAEJHCedTy7gGpxIxr3n_db6qawbJAN6gCo"
+MASTER_TOKEN = "9270110650:AAHOnKyrr9pb3gQvaRr5_5h6ERdgSzxOehU"
 MASTER_OWNER_ID = 8947359034
 
 DATA_DIR = "/tmp"
@@ -46,34 +46,24 @@ def get_base_url():
 BASE_URL = get_base_url()
 
 # ============================================================
-# 🔒 DUPLICATE UPDATE ÖNLEYİCİ (TEKRAR MESAJ SORUNUNU ÇÖZER)
+# 🔒 ÇİFT MESAJ VE HIZLI TIKLAMA ÖNLEYİCİ (KÖK ÇÖZÜM)
 # ============================================================
-_processed_updates = {}
-_update_lock = threading.Lock()
+_processed_messages = {}
+_msg_lock = threading.Lock()
 
-def is_duplicate(update_id):
-    """Aynı update_id 2 kez geldiyse True döner"""
-    if not update_id: return False
-    with _update_lock:
+def is_duplicate(uid, text, update_id=None):
+    """Aynı kullanıcı aynı mesajı 2 saniye içinde tekrar atarsa engeller."""
+    with _msg_lock:
         now = time.time()
-        # 60 saniyeden eski kayıtları temizle
-        old_keys = [k for k, v in _processed_updates.items() if now - v > 60]
-        for k in old_keys: del _processed_updates[k]
+        # 10 saniyeden eski kayıtları temizle (bellek sızıntısını önler)
+        keys_to_del = [k for k, v in _processed_messages.items() if now - v > 10]
+        for k in keys_to_del: del _processed_messages[k]
         
-        if update_id in _processed_updates:
-            return True
-        _processed_updates[update_id] = now
+        key = f"{uid}_{text}"
+        if key in _processed_messages:
+            return True # Tekrar mesaj
+        _processed_messages[key] = now
         return False
-
-# Kullanıcı bazlı kilit (aynı kullanıcıdan art arda gelen mesajları sıraya sokar)
-_user_locks = {}
-_user_locks_guard = threading.Lock()
-
-def get_user_lock(uid):
-    with _user_locks_guard:
-        if uid not in _user_locks:
-            _user_locks[uid] = threading.Lock()
-        return _user_locks[uid]
 
 # ============================================================
 # 💾 HIZLI VERİTABANI
@@ -172,15 +162,14 @@ def make_kb(buttons):
 MASTER_STATE = {}
 
 def master_handle(update):
-    # DUPLICATE KONTROLÜ
-    update_id = update.get("update_id")
-    if is_duplicate(update_id): return
-    
     if "message" in update:
         msg = update["message"]
         chat_id = msg["chat"]["id"]
         from_id = msg["from"]["id"]
         text = (msg.get("text") or "").strip()
+        
+        # Çift mesaj koruması
+        if is_duplicate(from_id, text): return
         
         if "document" in msg:
             handle_document(msg, chat_id, from_id)
@@ -200,22 +189,14 @@ def master_handle(update):
             kb["inline_keyboard"] = [r for r in kb["inline_keyboard"] if r]
             return send_message(MASTER_TOKEN, chat_id, "🇹🇷 <b>Hoş Geldiniz!</b>\n\nKendi botunuzu oluşturmak için butonları kullanın.", reply_markup=kb)
         
-        # KULLANICI KİLİDİ İLE SIRALI İŞLEME
-        user_lock = get_user_lock(from_id)
-        if not user_lock.acquire(blocking=False):
-            # Aynı kullanıcıdan işlem devam ediyor, bu mesajı atla
+        if from_id in MASTER_STATE:
+            handle_master_step(from_id, chat_id, text)
             return
-        try:
-            if from_id in MASTER_STATE:
-                handle_master_step(from_id, chat_id, text)
-                return
-            
-            st = get_state(from_id)
-            if st and "step" in st:
-                handle_master_step(from_id, chat_id, text)
-                return
-        finally:
-            user_lock.release()
+        
+        st = get_state(from_id)
+        if st and "step" in st:
+            handle_master_step(from_id, chat_id, text)
+            return
     
     elif "callback_query" in update:
         cb = update["callback_query"]
@@ -226,14 +207,11 @@ def master_handle(update):
         answer_callback(MASTER_TOKEN, cb["id"])
         
         if data == "show_templates":
-            kb = make_kb([
-                [("🔍 Sorgu Botu", "tpl:query")],
-                [("⬅️ Geri", "home")]
-            ])
+            kb = make_kb([[("🔍 Sorgu Botu", "tpl:query")], [("⬅️ Geri", "home")]])
             return edit_message(MASTER_TOKEN, chat_id, msg_id, "🧩 <b>Lütfen Şablon Seçin</b>", reply_markup=kb)
         
         if data == "upload_py":
-            return edit_message(MASTER_TOKEN, chat_id, msg_id, "📤 Lütfen botunuzun <code>.py</code> dosyasını gönderin.\n(Dosya içinde TOKEN, ADMIN_ID, BOT_NAME olmalı)")
+            return edit_message(MASTER_TOKEN, chat_id, msg_id, "📤 Lütfen botunuzun <code>.py</code> dosyasını gönderin.")
         
         if data == "home":
             kb = make_kb([
@@ -243,34 +221,27 @@ def master_handle(update):
             ])
             kb["inline_keyboard"] = [r for r in kb["inline_keyboard"] if r]
             return edit_message(MASTER_TOKEN, chat_id, msg_id, "🏠 <b>Ana Menü</b>", reply_markup=kb)
-        
+            
         if data == "master_admin" and from_id == MASTER_OWNER_ID:
             db = load_db()
             mnt = "🟢 Aktif" if not db.get("maintenance") else "🔴 Bakımda"
             txt = f"👑 <b>MASTER ADMIN</b>\n\n🤖 Botlar: {len(db.get('clons', {}))}\n👥 Kullanıcı: {sum(len(c.get('users', [])) for c in db.get('clons', {}).values())}\n⚙️ Durum: {mnt}"
-            kb = make_kb([
-                [("📢 Global Duyuru", "m_global_announce")],
-                [("⚙️ Bakım Modu", "m_toggle_maint")],
-                [("⬅️ Geri", "home")]
-            ])
+            kb = make_kb([[("📢 Global Duyuru", "m_global_announce")], [("⚙️ Bakım Modu", "m_toggle_maint")], [("⬅️ Geri", "home")]])
             return edit_message(MASTER_TOKEN, chat_id, msg_id, txt, reply_markup=kb)
-        
+            
         if data == "m_global_announce":
             MASTER_STATE[from_id] = {"action": "global_announce"}
             return send_message(MASTER_TOKEN, chat_id, "📢 Duyuru metnini yaz:")
-        
+            
         if data == "m_toggle_maint":
-            db = load_db()
-            db["maintenance"] = not db.get("maintenance", False)
-            save_db(db)
+            db = load_db(); db["maintenance"] = not db.get("maintenance", False); save_db(db)
             status = "🟢 Aktif" if not db["maintenance"] else "🔴 Bakımda"
             return send_message(MASTER_TOKEN, chat_id, f"⚙️ Sistem: {status}")
-        
+            
         if data.startswith("tpl:"):
-            # ÖNEMLİ: State'i set et, sonra mesaj gönder
             set_state(from_id, {"template": data[4:], "step": "token", "data": {}})
             return edit_message(MASTER_TOKEN, chat_id, msg_id, "<b>Adım 1:</b> Bot Tokenini gönder:")
-        
+            
         if data.startswith("feat:"):
             feat = data.split(":")[1]
             st = get_state(from_id)
@@ -287,18 +258,17 @@ def master_handle(update):
                 btns.append([(f"{check} {f['name']}", f"feat:{key}")])
             btns.append([("➡️ Devam Et", "feat_done")])
             return edit_message(MASTER_TOKEN, chat_id, msg_id, "<b>Admin Panel Özellikleri:</b>", reply_markup=make_kb(btns))
-        
+            
         if data == "feat_done":
             st = get_state(from_id)
             if not st: return
             st["step"] = "support"
             set_state(from_id, st)
             return edit_message(MASTER_TOKEN, chat_id, msg_id, "<b>Adım 5:</b> Destek linki (https://t.me/...):")
-        
+            
         if data == "confirm_yes":
-            # Duplicate önleme - state zaten temizlenmişse çık
             st = get_state(from_id)
-            if not st: 
+            if not st or st.get("step") != "confirm": 
                 return edit_message(MASTER_TOKEN, chat_id, msg_id, "⚠️ Bu işlem zaten tamamlandı.")
             set_state(from_id, None)
             
@@ -316,7 +286,7 @@ def master_handle(update):
                 requests.post(f"https://api.telegram.org/bot{d['token']}/setMyName", json={"name": d["bot_name"]}, timeout=10)
             except: pass
             return edit_message(MASTER_TOKEN, chat_id, msg_id, f"✅ <b>Bot kuruldu!</b>\n\n🤖 {d['bot_name']}\n🔗 https://t.me/{d['bot_username']}")
-        
+            
         if data == "cancel":
             set_state(from_id, None); MASTER_STATE.pop(from_id, None)
             return edit_message(MASTER_TOKEN, chat_id, msg_id, "❌ İptal edildi.")
@@ -327,11 +297,11 @@ def handle_document(msg, chat_id, from_id):
         file_name = msg["document"]["file_name"]
         if not file_name.endswith(".py"):
             return send_message(MASTER_TOKEN, chat_id, "❌ Sadece .py dosyası kabul edilir.")
-        
+            
         r = tg_call(MASTER_TOKEN, "getFile", file_id=file_id)
         if not r.get("ok"):
             return send_message(MASTER_TOKEN, chat_id, "❌ Dosya alınamadı.")
-        
+            
         file_path = r["result"]["file_path"]
         file_url = f"https://api.telegram.org/file/bot{MASTER_TOKEN}/{file_path}"
         py_content = requests.get(file_url, timeout=15).text
@@ -342,7 +312,7 @@ def handle_document(msg, chat_id, from_id):
         
         if not token_match or not admin_match:
             return send_message(MASTER_TOKEN, chat_id, "❌ Geçersiz .py: TOKEN ve ADMIN_ID bulunamadı.")
-        
+            
         token = token_match.group(1)
         admin_id = int(admin_match.group(1))
         bot_name = name_match.group(1) if name_match else "Clon Bot"
@@ -374,51 +344,39 @@ def handle_master_step(from_id, chat_id, text):
     if text == "/iptal":
         MASTER_STATE.pop(from_id, None); set_state(from_id, None)
         return send_message(MASTER_TOKEN, chat_id, "❌ İptal edildi.")
-    
+        
     if from_id in MASTER_STATE:
         act = MASTER_STATE[from_id]
         if act["action"] == "global_announce":
-            MASTER_STATE.pop(from_id, None)
-            db = load_db(); sent = 0
+            MASTER_STATE.pop(from_id, None); db = load_db(); sent = 0
             for clon in db.get("clons", {}).values():
                 for u in clon.get("users", []):
                     try:
-                        send_message(clon["token"], u, f"📢 <b>GLOBAL DUYURU</b>\n\n{text}")
-                        sent += 1
+                        send_message(clon["token"], u, f"📢 <b>GLOBAL DUYURU</b>\n\n{text}"); sent += 1
                     except: pass
             return send_message(MASTER_TOKEN, chat_id, f"✅ {sent} kişiye gönderildi.")
-    
+            
     st = get_state(from_id)
     if not st or "step" not in st: return
     step = st["step"]; data = st["data"]
     
     if step == "token":
-        if ":" not in text:
-            return send_message(MASTER_TOKEN, chat_id, "❌ Geçersiz token.")
+        if ":" not in text: return send_message(MASTER_TOKEN, chat_id, "❌ Geçersiz token.")
         r = tg_call(text, "getMe")
-        if not r.get("ok"):
-            return send_message(MASTER_TOKEN, chat_id, "❌ Token doğrulanamadı.")
-        data["token"] = text
-        data["bot_username"] = r["result"]["username"]
-        st["step"] = "admin_id"
-        set_state(from_id, st)  # STATE ÖNCE KAYDET
+        if not r.get("ok"): return send_message(MASTER_TOKEN, chat_id, "❌ Token doğrulanamadı.")
+        data["token"] = text; data["bot_username"] = r["result"]["username"]
+        st["step"] = "admin_id"; set_state(from_id, st)
         return send_message(MASTER_TOKEN, chat_id, "<b>Adım 2:</b> Admin ID'ni gönder:")
-    
+        
     elif step == "admin_id":
         clean_id = re.sub(r'\D', '', text)
-        if not clean_id:
-            return send_message(MASTER_TOKEN, chat_id, "❌ Sadece rakam girin.")
-        data["owner_id"] = int(clean_id)
-        st["step"] = "bot_name"
-        set_state(from_id, st)  # STATE ÖNCE KAYDET
+        if not clean_id: return send_message(MASTER_TOKEN, chat_id, "❌ Sadece rakam girin.")
+        data["owner_id"] = int(clean_id); st["step"] = "bot_name"; set_state(from_id, st)
         return send_message(MASTER_TOKEN, chat_id, "<b>Adım 3:</b> Bot ismini gönder:")
-    
+        
     elif step == "bot_name":
-        data["bot_name"] = text[:64]
-        data["features"] = {k: f["default"] for k, f in ADMIN_FEATURES.items()}
-        st["data"] = data
-        st["step"] = "features"
-        set_state(from_id, st)  # STATE ÖNCE KAYDET
+        data["bot_name"] = text[:64]; data["features"] = {k: f["default"] for k, f in ADMIN_FEATURES.items()}
+        st["data"] = data; st["step"] = "features"; set_state(from_id, st)
         
         btns = []
         for key, f in ADMIN_FEATURES.items():
@@ -426,21 +384,15 @@ def handle_master_step(from_id, chat_id, text):
             btns.append([(f"✅ {f['name']}", f"feat:{key}")])
         btns.append([("➡️ Devam Et", "feat_done")])
         return send_message(MASTER_TOKEN, chat_id, "<b>Adım 4:</b> Admin Panel Özellikleri:", reply_markup=make_kb(btns))
-    
+        
     elif step == "support":
-        if not text.startswith("https://t.me/"):
-            return send_message(MASTER_TOKEN, chat_id, "❌ https://t.me/... olmalı.")
+        if not text.startswith("https://t.me/"): return send_message(MASTER_TOKEN, chat_id, "❌ https://t.me/... olmalı.")
         data["support"] = text
-        # STATE'İ TEMİZLEMEDEN ÖNCE ÖZET GÖSTER
-        # (Confirm_yes'te temizlenecek)
-        st["step"] = "confirm"  # Bu adım artık bekliyor
-        set_state(from_id, st)
+        st["step"] = "confirm"; set_state(from_id, st)
         
         feats_text = ", ".join([f["name"] for k, f in ADMIN_FEATURES.items() if data.get("features", {}).get(k)]) or "Yok"
         txt = f"📋 <b>ÖZET</b>\n\n🤖 Bot: @{data['bot_username']}\n📝 İsim: {data['bot_name']}\n👑 Admin: {data['owner_id']}\n🩵 Destek: {data['support']}\n⚙️ Özellikler: {feats_text}\n\n✅ Onaylıyor musun?"
-        kb = make_kb([
-            [("✅ Onayla", "confirm_yes"), ("❌ İptal", "cancel")]
-        ])
+        kb = make_kb([[("✅ Onayla", "confirm_yes"), ("❌ İptal", "cancel")]])
         return send_message(MASTER_TOKEN, chat_id, txt, reply_markup=kb)
 
 # ============================================================
@@ -475,17 +427,13 @@ def clean_response(txt):
     return data
 
 def clon_handle(token, update):
-    # DUPLICATE KONTROLÜ
-    update_id = update.get("update_id")
-    if is_duplicate(update_id): return
-    
     clon = get_clon(token)
     if not clon: return
     
     db = load_db()
     if db.get("maintenance") and update.get("message", {}).get("from", {}).get("id") != clon["owner_id"]:
         return
-    
+        
     if "message" in update:
         msg = update["message"]
         chat_id = msg["chat"]["id"]
@@ -493,6 +441,7 @@ def clon_handle(token, update):
         text = (msg.get("text") or "").strip()
         fname = msg["from"].get("first_name", "")
         
+        if is_duplicate(from_id, text): return
         if from_id in clon.get("banned_dm", []): return
         if clon.get("status") == "passive" and from_id != clon["owner_id"]: return
         
@@ -501,31 +450,32 @@ def clon_handle(token, update):
             if act["token"] == token:
                 handle_clon_action(token, chat_id, from_id, clon, act, text)
                 return
-        
+                
         if text == "/start":
             if from_id not in clon.get("users", []):
                 clon["users"].append(from_id); save_clon(token, clon)
-            
+                
             if clon.get("maintenance") and from_id != clon["owner_id"]:
                 return send_message(token, chat_id, "⚠️ Bot bakımda!")
-            
+                
             btns = []
             active = [q for q, v in clon.get("queries", {}).items() if v.get("active", True)]
             row = []
-            for i, q in enumerate(active):
+            # BURASI 2'ŞERLİ YAPILDI
+            for q in active:
                 row.append((f"🔍 {q}", f"q_{q}"))
                 if len(row) == 2: btns.append(row); row = []
             if row: btns.append(row)
             
             if clon.get("support"):
                 btns.append([("🩵 Destek", clon["support"], True)])
-            
+                
             return send_message(token, chat_id, f"👋 <b>Hoş Geldin, {fname}!</b>\n\nMenüden sorgu seç.", reply_markup=make_kb(btns))
-        
+            
         if text == "/admin":
             if from_id != clon["owner_id"]: return
             return show_clon_panel(token, chat_id, clon)
-        
+            
         query_type = clon.get("active_query", {}).get(str(from_id))
         if query_type:
             ok, remain = _check_cooldown(from_id)
@@ -537,7 +487,7 @@ def clon_handle(token, update):
                 q_data = clon.get("queries", {}).get(query_type)
                 if not q_data or not q_data.get("active"):
                     return edit_message(token, chat_id, status["result"]["message_id"], "❌ Sorgu devre dışı.")
-                
+                    
                 url = q_data["url"]; parts = text.split(); params = {}
                 if query_type == "Ad Soyad":
                     if len(parts) < 2: return edit_message(token, chat_id, status["result"]["message_id"], "❌ Ad ve Soyad girin.")
@@ -552,12 +502,12 @@ def clon_handle(token, update):
                     elif "{gsm}" in url:
                         clean = "".join(filter(str.isdigit, text))
                         url = url.format(gsm=clean[1:] if clean.startswith("0") else clean)
-                
+                        
                 r = requests.get(url, params=params, timeout=15)
                 data = clean_response(r.text)
                 if isinstance(data, dict) and data.get("hata"):
                     return edit_message(token, chat_id, status["result"]["message_id"], f"❌ Hata: {data.get('hata')}")
-                
+                    
                 fn = os.path.join(DATA_DIR, f"sorgu_{int(time.time())}.json")
                 with open(fn, "w", encoding="utf-8") as f: json.dump(data, f, ensure_ascii=False, indent=4)
                 
@@ -571,7 +521,7 @@ def clon_handle(token, update):
                 try: edit_message(token, chat_id, status["result"]["message_id"], f"❌ Hata: {str(e)[:100]}")
                 except: pass
             return
-    
+            
     elif "callback_query" in update:
         cb = update["callback_query"]
         chat_id = cb["message"]["chat"]["id"]
@@ -584,16 +534,15 @@ def clon_handle(token, update):
             try: delete_message(token, chat_id, msg_id)
             except: pass
             return send_message(token, chat_id, "🏠 Ana Menü: /start")
-        
+            
         if data.startswith("q_"):
             q_name = data[2:]
             if "active_query" not in clon: clon["active_query"] = {}
-            clon["active_query"][str(from_id)] = q_name
-            save_clon(token, clon)
+            clon["active_query"][str(from_id)] = q_name; save_clon(token, clon)
             hint = clon.get("queries", {}).get(q_name, {}).get("hint", "Bilgi girin:")
             kb = make_kb([[("❌ İptal", "back_to_menu")]])
             return edit_message(token, chat_id, msg_id, f"🔍 <b>{q_name}</b>\n\n{hint}", reply_markup=kb)
-        
+            
         if from_id == clon["owner_id"] and data.startswith("m_"):
             clon_panel_callback(token, chat_id, from_id, clon, data, cb)
 
@@ -635,20 +584,13 @@ def clon_panel_callback(token, chat_id, uid, clon, data, cb):
     elif data.startswith("q_edit:"):
         q_name = data.split(":")[1]
         q = clon["queries"][q_name]
-        btns = [
-            [("🔴 Toggle", f"q_toggle:{q_name}")],
-            [("✏️ Link Değiştir", f"q_url:{q_name}")],
-            [("🗑 Sil", f"q_del:{q_name}")],
-            [("⬅️ Geri", "m_manage_queries")]
-        ]
+        btns = [[("🔴 Toggle", f"q_toggle:{q_name}")], [("✏️ Link Değiştir", f"q_url:{q_name}")], [("🗑 Sil", f"q_del:{q_name}")], [("⬅️ Geri", "m_manage_queries")]]
         send_message(token, chat_id, f"🔍 <b>{q_name}</b>\nDurum: {q.get('active')}\nLink: <code>{q.get('url')}</code>", reply_markup=make_kb(btns))
     elif data.startswith("q_toggle:"):
-        q = data.split(":")[1]
-        clon["queries"][q]["active"] = not clon["queries"][q]["active"]; save_clon(token, clon)
+        q = data.split(":")[1]; clon["queries"][q]["active"] = not clon["queries"][q]["active"]; save_clon(token, clon)
         send_message(token, chat_id, "✅ Değiştirildi.")
     elif data.startswith("q_del:"):
-        clon["queries"].pop(data.split(":")[1], None); save_clon(token, clon)
-        send_message(token, chat_id, "✅ Silindi.")
+        clon["queries"].pop(data.split(":")[1], None); save_clon(token, clon); send_message(token, chat_id, "✅ Silindi.")
     elif data.startswith("q_url:"):
         PENDING_ACTION[uid] = {"token": token, "action": "set_url", "q_name": data.split(":")[1]}
         send_message(token, chat_id, "Yeni API linki:")
@@ -672,8 +614,7 @@ def handle_clon_action(token, chat_id, uid, clon, act, txt):
         clon["queries"][act["q_name"]] = {"url": txt, "active": True, "hint": "Bilgi girin"}
         save_clon(token, clon); send_message(token, chat_id, "✅ API eklendi.")
     elif action == "set_url":
-        clon["queries"][act["q_name"]]["url"] = txt; save_clon(token, clon)
-        send_message(token, chat_id, "✅ Güncellendi.")
+        clon["queries"][act["q_name"]]["url"] = txt; save_clon(token, clon); send_message(token, chat_id, "✅ Güncellendi.")
     elif action == "announce":
         sent = 0
         for u in clon.get("users", []):
@@ -687,11 +628,10 @@ def handle_clon_action(token, chat_id, uid, clon, act, txt):
             save_clon(token, clon); send_message(token, chat_id, "🚫 Banlandı.")
     elif action == "unban":
         if txt.isdigit() and int(txt) in clon.get("banned_dm", []):
-            clon["banned_dm"].remove(int(txt)); save_clon(token, clon)
-            send_message(token, chat_id, "✅ Unban.")
+            clon["banned_dm"].remove(int(txt)); save_clon(token, clon); send_message(token, chat_id, "✅ Unban.")
 
 # ============================================================
-# 🚀 FLASK WEBHOOK
+# 🚀 FLASK WEBHOOK & CRON
 # ============================================================
 app = Flask(__name__)
 
@@ -726,10 +666,11 @@ def setup():
 
 @app.route("/cron", methods=["GET"])
 def cron():
+    # Vercel uyku moduna girmesin diye kendini pingler
     try:
         requests.get(f"https://api.telegram.org/bot{MASTER_TOKEN}/setWebhook?url={BASE_URL}/master", timeout=10)
     except: pass
-    return {"status": "ok"}
+    return {"status": "cron ok"}
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
