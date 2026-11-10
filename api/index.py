@@ -15,7 +15,8 @@ except ImportError:
 # ============================================================
 # ⚙️ AYARLAR
 # ============================================================
-MASTER_TOKEN = "9036617836:AAGoBoPoHmtIMIAybdV3JBCSdkNO55BYwjQ"
+# YENİ ANA BOT TOKENİ
+MASTER_TOKEN = "9013867167:AAGnKFcv5Us7ipCoy4x8QN8mVsBhcG2ZlVk"
 MASTER_OWNER_ID = 8947359034
 
 GITHUB_TOKEN = "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"
@@ -39,7 +40,6 @@ DEFAULT_QUERIES = {
 
 BAD_WORDS = ["DEVOLOPER","DEVELOPER","developer","Devoloper","sürüm","Sürüm","SURUM","version","Version","auth","Auth","altauth","@jessy_php","jessy_php","JESSY_PHP"]
 
-# Admin Panel Özellikleri
 ADMIN_FEATURES = {
     "announce": {"name": "📣 Duyuru Gönderme", "default": True},
     "stats": {"name": "📊 Statik", "default": True},
@@ -50,41 +50,59 @@ ADMIN_FEATURES = {
 }
 
 def get_base_url():
-    url = os.environ.get("VERCEL_PROJECT_PRODUCTION_URL") or os.environ.get("VERCEL_URL") or "aminoglubabalarinc.vercel.app"
-    if not url.startswith("http"): url = "https://" + url
+    # Vercel URL'sini otomatik al (Production URL öncelikli)
+    url = os.environ.get("VERCEL_PROJECT_PRODUCTION_URL") or os.environ.get("VERCEL_URL")
+    if not url:
+        # Eğer Vercel'de değilse varsayılan domaininizi buraya yazın
+        url = "sorgulaincpro.vercel.app" 
+    if not url.startswith("http"): 
+        url = "https://" + url
     return url.rstrip("/")
 
 BASE_URL = get_base_url()
 
 # ============================================================
-# 💾 VERİTABANI
+# 💾 VERİTABANI (HIZLI ÖNBELLEK - VERİ KAYBI VE DONMAYI ÇÖZER)
 # ============================================================
 _memory_db = None
+_db_lock = threading.Lock()
 
 def load_db(force_github=False):
     global _memory_db
-    if _memory_db is not None and not force_github: return _memory_db
-    if GITHUB_TOKEN:
-        try:
-            url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/data.json?ref={GITHUB_BRANCH}"
-            r = requests.get(url, headers={"Authorization": f"token {GITHUB_TOKEN}"}, timeout=3)
-            if r.status_code == 200:
-                _memory_db = json.loads(base64.b64decode(r.json()["content"]).decode())
-                return _memory_db
-        except: pass
-    if os.path.exists(DB_FILE):
-        try:
-            with open(DB_FILE, "r", encoding="utf-8") as f: 
-                _memory_db = json.load(f)
-                return _memory_db
-        except: pass
-    _memory_db = {"clons": {}, "states": {}, "maintenance": False}
-    return _memory_db
+    with _db_lock:
+        if _memory_db is not None and not force_github: 
+            return _memory_db
+        
+        # GitHub'dan çek
+        if GITHUB_TOKEN:
+            try:
+                url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/data.json?ref={GITHUB_BRANCH}"
+                r = requests.get(url, headers={"Authorization": f"token {GITHUB_TOKEN}"}, timeout=3)
+                if r.status_code == 200:
+                    _memory_db = json.loads(base64.b64decode(r.json()["content"]).decode())
+                    return _memory_db
+            except: pass
+            
+        # Lokal dosyadan çek
+        if os.path.exists(DB_FILE):
+            try:
+                with open(DB_FILE, "r", encoding="utf-8") as f: 
+                    _memory_db = json.load(f)
+                    return _memory_db
+            except: pass
+                
+        _memory_db = {"clons": {}, "states": {}, "maintenance": False}
+        return _memory_db
 
 def save_db(data):
     global _memory_db
-    _memory_db = data
-    with open(DB_FILE, "w", encoding="utf-8") as f: json.dump(data, f, ensure_ascii=False)
+    with _db_lock:
+        _memory_db = data
+        try:
+            with open(DB_FILE, "w", encoding="utf-8") as f: json.dump(data, f, ensure_ascii=False)
+        except: pass
+        
+    # GitHub'a yedekle (Thread ile arka planda)
     if GITHUB_TOKEN:
         def _backup():
             try:
@@ -112,14 +130,12 @@ def set_state(uid, state):
     save_db(db)
 
 # ============================================================
-# 🤖 ANA BOT (ŞABLON VE .PY YÜKLEME)
+# 🤖 ANA BOT
 # ============================================================
 master = telebot.TeleBot(MASTER_TOKEN, threaded=True, num_threads=10)
 MASTER_STATE = {}
 
-TEMPLATES = {
-    "query": {"emoji": "🔍", "name": "Sorgu Botu", "desc": "TC/GSM Sorgu"}
-}
+TEMPLATES = {"query": {"emoji": "🔍", "name": "Sorgu Botu", "desc": "TC/GSM Sorgu"}}
 
 def get_main_kb(uid):
     kb = InlineKeyboardMarkup()
@@ -134,10 +150,9 @@ def master_start(m):
     set_state(m.from_user.id, None); MASTER_STATE.pop(m.from_user.id, None)
     db = load_db()
     if db.get("maintenance") and m.from_user.id != MASTER_OWNER_ID:
-        return master.send_message(m.chat.id, "⚠️ <b>Sistem şu anda bakımda!</b>\nLütfen daha sonra tekrar deneyin.", parse_mode="HTML")
+        return master.send_message(m.chat.id, "⚠️ <b>Sistem şu anda bakımda!</b>", parse_mode="HTML")
     
-    welcome_text = "🇹🇷 <b>Hoş Geldiniz!</b>\n\n🤖 Botumuz <b>7/24</b> hizmet vermekte ve <b>tamamen ücretsizdir</b>.\n\nKendi botunuzu oluşturmak için aşağıdaki butonları kullanın."
-    master.send_message(m.chat.id, welcome_text, reply_markup=get_main_kb(m.from_user.id), parse_mode="HTML")
+    master.send_message(m.chat.id, "🇹🇷 <b>Hoş Geldiniz!</b>\n\n🤖 Botumuz <b>7/24</b> hizmet vermekte ve <b>tamamen ücretsizdir</b>.\n\nKendi botunuzu oluşturmak için aşağıdaki butonları kullanın.", reply_markup=get_main_kb(m.from_user.id), parse_mode="HTML")
 
 @master.message_handler(content_types=['document'])
 def master_document(m):
@@ -152,7 +167,7 @@ def master_document(m):
         name_match = re.search(r'BOT_NAME\s*=\s*["\']([^"\']+)["\']', py_content)
         
         if not token_match or not admin_match:
-            return master.reply_to(m, "❌ <b>Geçersiz .py dosyası!</b>\nDosya içinde TOKEN ve ADMIN_ID bulunamadı.", parse_mode="HTML")
+            return master.reply_to(m, "❌ <b>Geçersiz .py dosyası!</b>", parse_mode="HTML")
             
         token = token_match.group(1)
         admin_id = int(admin_match.group(1))
@@ -160,13 +175,10 @@ def master_document(m):
         
         try:
             r = requests.get(f"https://api.telegram.org/bot{token}/getMe", timeout=5).json()
-            if not r.get("ok"):
-                return master.reply_to(m, "❌ Token geçersiz!")
+            if not r.get("ok"): return master.reply_to(m, "❌ Token geçersiz!")
             bot_username = r["result"]["username"]
-        except:
-            return master.reply_to(m, "❌ Token doğrulanamadı!")
-        
-        # .py yüklemesinde varsayılan olarak tüm özellikler açık kabul edilir (İstenirse burası sorulabilir)
+        except: return master.reply_to(m, "❌ Token doğrulanamadı!")
+            
         clon = {
             "token": token, "bot_username": bot_username, "owner_id": admin_id,
             "bot_name": bot_name, "status": "active", "maintenance": False,
@@ -193,13 +205,12 @@ def master_cb(c):
 
     if d == "show_templates":
         kb = InlineKeyboardMarkup()
-        for key, tpl in TEMPLATES.items():
-            kb.add(InlineKeyboardButton(f"{tpl['emoji']} {tpl['name']}", callback_data=f"tpl:{key}"))
+        for key, tpl in TEMPLATES.items(): kb.add(InlineKeyboardButton(f"{tpl['emoji']} {tpl['name']}", callback_data=f"tpl:{key}"))
         kb.add(InlineKeyboardButton("⬅️ Geri", callback_data="home"))
         return master.edit_message_text("🧩 <b>Lütfen Şablon Seçin</b>", chat_id, msg_id, reply_markup=kb, parse_mode="HTML")
 
     if d == "upload_py":
-        return master.edit_message_text("📤 Lütfen botunuzun <code>.py</code> dosyasını gönderin.\n(Dosya içinde TOKEN, ADMIN_ID ve BOT_NAME olmalıdır)", chat_id, msg_id, parse_mode="HTML")
+        return master.edit_message_text("📤 Lütfen botunuzun <code>.py</code> dosyasını gönderin.", chat_id, msg_id, parse_mode="HTML")
 
     if d == "home":
         return master.edit_message_text("🏠 <b>Ana Menü</b>", chat_id, msg_id, reply_markup=get_main_kb(uid), parse_mode="HTML")
@@ -209,27 +220,24 @@ def master_cb(c):
             db = load_db()
             mnt = "🟢 Aktif" if not db.get("maintenance") else "🔴 Bakımda"
             txt = f"👑 <b>MASTER ADMIN PANEL</b>\n\n🤖 Aktif Botlar: <b>{len(db.get('clons', {}))}</b>\n👥 Toplam Kullanıcı: <b>{sum(len(c.get('users', [])) for c in db.get('clons', {}).values())}</b>\n⚙️ Sistem Durumu: {mnt}"
-            kb = InlineKeyboardMarkup()
-            kb.add(InlineKeyboardButton("🤖 Clon Botları Yönet", callback_data="m_manage_bots"))
-            kb.add(InlineKeyboardButton("📢 Global Duyuru", callback_data="m_global_announce"))
-            kb.add(InlineKeyboardButton("⚙️ Bakım Modunu Değiştir", callback_data="m_toggle_maint"))
-            kb.add(InlineKeyboardButton("⬅️ Geri", callback_data="home"))
+            kb = InlineKeyboardMarkup().add(
+                InlineKeyboardButton("🤖 Clon Botları Yönet", callback_data="m_manage_bots"),
+                InlineKeyboardButton("📢 Global Duyuru", callback_data="m_global_announce"),
+                InlineKeyboardButton("⚙️ Bakım Modunu Değiştir", callback_data="m_toggle_maint"),
+                InlineKeyboardButton("⬅️ Geri", callback_data="home")
+            )
             return master.edit_message_text(txt, chat_id, msg_id, reply_markup=kb, parse_mode="HTML")
         
         if d == "m_manage_bots":
             db = load_db(); kb = InlineKeyboardMarkup()
-            for tok, clon in db.get("clons", {}).items():
-                kb.add(InlineKeyboardButton(f"🤖 {clon['bot_name']}", callback_data=f"m_bot:{tok}"))
+            for tok, clon in db.get("clons", {}).items(): kb.add(InlineKeyboardButton(f"🤖 {clon['bot_name']}", callback_data=f"m_bot:{tok}"))
             kb.add(InlineKeyboardButton("⬅️ Geri", callback_data="master_admin"))
             return master.edit_message_text("Yönetmek istediğiniz botu seçin:", chat_id, msg_id, reply_markup=kb)
             
         if d.startswith("m_bot:"):
             tok = d.split(":")[1]; clon = get_clon(tok)
             if not clon: return master.edit_message_text("❌ Bot bulunamadı.", chat_id, msg_id)
-            kb = InlineKeyboardMarkup().add(
-                InlineKeyboardButton("🗑 Botu Sil", callback_data=f"del_bot:{tok}"),
-                InlineKeyboardButton("⬅️ Geri", callback_data="m_manage_bots")
-            )
+            kb = InlineKeyboardMarkup().add(InlineKeyboardButton("🗑 Botu Sil", callback_data=f"del_bot:{tok}"), InlineKeyboardButton("⬅️ Geri", callback_data="m_manage_bots"))
             return master.edit_message_text(f"🤖 Bot: {clon['bot_name']}\nSahip ID: {clon['owner_id']}\nKullanıcı: {len(clon.get('users', []))}", chat_id, msg_id, reply_markup=kb)
             
         if d.startswith("del_bot:"):
@@ -257,14 +265,13 @@ def master_cb(c):
         st["data"]["features"] = feats
         set_state(uid, st)
         
-        # Klavyeyi yeniden çiz
         kb = InlineKeyboardMarkup()
         for key, f in ADMIN_FEATURES.items():
             if key == "api_manage" and st["template"] != "query": continue
             checked = "✅" if feats.get(key) else "❌"
             kb.add(InlineKeyboardButton(f"{checked} {f['name']}", callback_data=f"feat:{key}"))
         kb.add(InlineKeyboardButton("➡️ Devam Et", callback_data="feat_done"))
-        return master.edit_message_text("<b>Admin Panel Özellikleri:</b>\nLütfen kullanmak istediğiniz özellikleri seçin:", chat_id, msg_id, reply_markup=kb, parse_mode="HTML")
+        return master.edit_message_text("<b>Admin Panel Özellikleri:</b>\nLütfen seçin:", chat_id, msg_id, reply_markup=kb, parse_mode="HTML")
 
     if d == "feat_done":
         st = get_state(uid)
@@ -274,11 +281,13 @@ def master_cb(c):
 
     if d == "cancel":
         set_state(uid, None); MASTER_STATE.pop(uid, None)
-        return master.edit_message_text("❌ İşlem iptal edildi.", chat_id, msg_id, reply_markup=get_main_kb(uid), parse_mode="HTML")
+        return master.edit_message_text("❌ İptal edildi.", chat_id, msg_id, reply_markup=get_main_kb(uid), parse_mode="HTML")
 
 @master.message_handler(func=lambda m: get_state(m.from_user.id) is not None or m.from_user.id in MASTER_STATE)
 def master_step(m):
-    uid = m.from_user.id; txt = m.text.strip() if m.text else ""
+    uid = m.from_user.id
+    txt = m.text.strip() if m.text else ""
+    
     if txt == "/iptal":
         MASTER_STATE.pop(uid, None); set_state(uid, None)
         return master.send_message(uid, "❌ İptal edildi.")
@@ -307,18 +316,18 @@ def master_step(m):
         except: return master.send_message(m.chat.id, "❌ Hata.")
         st["step"] = "admin_id"; set_state(uid, st)
         master.send_message(m.chat.id, "<b>Adım 2:</b> Admin ID'ni gönder:", parse_mode="HTML")
+        
     elif step == "admin_id":
-        if not txt.isdigit(): return master.send_message(m.chat.id, "❌ Sadece rakam.")
-        data["owner_id"] = int(txt); st["step"] = "bot_name"; set_state(uid, st)
+        # Sadece rakamları ayıkla (Boşluk, harf vs girilirse temizler)
+        clean_id = re.sub(r'\D', '', txt)
+        if not clean_id: return master.send_message(m.chat.id, "❌ Lütfen rakamlardan oluşan geçerli bir ID girin.")
+        data["owner_id"] = int(clean_id); st["step"] = "bot_name"; set_state(uid, st)
         master.send_message(m.chat.id, "<b>Adım 3:</b> Bot ismini gönder:", parse_mode="HTML")
+        
     elif step == "bot_name":
         data["bot_name"] = txt[:64]; 
-        
-        # Butonlu özellik seçimi başlat
         data["features"] = {k: f["default"] for k, f in ADMIN_FEATURES.items()}
-        st["data"] = data
-        st["step"] = "features"
-        set_state(uid, st)
+        st["data"] = data; st["step"] = "features"; set_state(uid, st)
         
         kb = InlineKeyboardMarkup()
         for key, f in ADMIN_FEATURES.items():
@@ -326,7 +335,7 @@ def master_step(m):
             checked = "✅" if data["features"].get(key) else "❌"
             kb.add(InlineKeyboardButton(f"{checked} {f['name']}", callback_data=f"feat:{key}"))
         kb.add(InlineKeyboardButton("➡️ Devam Et", callback_data="feat_done"))
-        master.send_message(m.chat.id, "<b>Adım 4:</b> Admin Panel Özellikleri:\nLütfen kullanmak istediğiniz özellikleri seçin:", reply_markup=kb, parse_mode="HTML")
+        master.send_message(m.chat.id, "<b>Adım 4:</b> Admin Panel Özellikleri:\nLütfen seçin:", reply_markup=kb, parse_mode="HTML")
         
     elif step == "support":
         if not txt.startswith("https://t.me/"): return master.send_message(m.chat.id, "❌ https://t.me/... olmalı.")
@@ -343,6 +352,7 @@ def _show_confirm(bot, uid, st):
 def master_confirm(c):
     uid = c.from_user.id
     st = get_state(uid); set_state(uid, None)
+    if not st: return
     d = st["data"]
     clon = {
         "token": d["token"], "bot_username": d["bot_username"], "owner_id": d["owner_id"],
@@ -359,7 +369,7 @@ def master_confirm(c):
     master.edit_message_text(f"✅ <b>Bot başarıyla oluşturuldu!</b>\n\n🤖 <b>{d['bot_name']}</b>\n🔗 https://t.me/{d['bot_username']}", c.message.chat.id, c.message.message_id, parse_mode="HTML")
 
 # ============================================================
-# 🎛 CLON BOT (ADMIN PANEL DİNAMİK)
+# 🎛 CLON BOT
 # ============================================================
 PENDING_ACTION = {}
 _user_last_query = {}
@@ -521,7 +531,6 @@ def _show_clon_panel(bot, chat_id, clon):
     if feats.get("ban"): kb.add(InlineKeyboardButton("🚫 Banla", callback_data="m_ban"), InlineKeyboardButton("✅ Ban Kaldır", callback_data="m_unban"))
     if feats.get("restart"): kb.add(InlineKeyboardButton("🔄 Sistem Yenile", callback_data="m_restart"))
     
-    # API Yönetimi SADECE Sorgu Botu ise
     if feats.get("api_manage") and clon.get("template") == "query":
         kb.add(InlineKeyboardButton("🔗 Sorguları Yönet", callback_data="m_manage_queries"))
         
@@ -642,6 +651,7 @@ def clon_webhook(token):
 
 @app.route("/setup", methods=["GET"])
 def setup():
+    # Webhook'ları kur
     requests.get(f"https://api.telegram.org/bot{MASTER_TOKEN}/setWebhook?url={BASE_URL}/master")
     for t in load_db().get("clons", {}):
         try: requests.get(f"https://api.telegram.org/bot{t}/setWebhook?url={BASE_URL}/clon/{t}")
@@ -650,6 +660,7 @@ def setup():
 
 @app.route("/cron", methods=["GET"])
 def cron():
+    # Vercel uyanık kalsın diye ping atılır
     try:
         requests.get(f"https://api.telegram.org/bot{MASTER_TOKEN}/setWebhook?url={BASE_URL}/master")
         for t in load_db().get("clons", {}):
@@ -657,4 +668,5 @@ def cron():
     except: pass
     return {"status": "cron ok"}
 
-if __name__ == "__main__": app.run(host="0.0.0.0", port=5000)
+if __name__ == "__main__": 
+    app.run(host="0.0.0.0", port=5000)
